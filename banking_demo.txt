@@ -34,7 +34,21 @@
 def Amount_Comparison() -> int:
   user_withdrawl_amt = history.last_user_utterance
   Max_Withdrawl_Amt = 5000
+  if isinstance(user_withdrawl_amt, str) and user_withdrawl_amt.isdigit():
+    user_withdrawl_amt = int(user_withdrawl_amt)
+  elif is instance(user_withdrawl_amt, str):
+    try:
+      user_withdrawl_amt = float(user_withdrawl_amt)
+    except ValueError:
+      return "Invalid withdrawal amount."
   
+  if instance(Max_Withdrawl_Amt, str) and Max_Withdrawl_Amt.isdigit():
+    Max_Withdrawl_Amt = int(Max_Withdrawl_Amt)
+  elif  isinstance(Max_Withdrawl_Amt, str):
+    try:
+      Max_Withdrawl_Amt = float(Max_Withdrawl_Amt)
+    except ValueError:
+      return "Invalid maximum withdrawal amount"
 if user_withdrawl_amt > Max_Withdrawl_Amt:
     return "inform the user that amount chosen for withdrawal exceeds the maximum withdrawal amount. Hence user should choose a different amount for withdrawal."   
   elif user_withdrawl_amt == Max_Withdrawl_Amt:
