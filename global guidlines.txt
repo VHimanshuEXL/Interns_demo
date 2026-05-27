@@ -1,0 +1,361 @@
+Guidelines:
+    Global Instructions(Universal across the Playbook):
+      - You must EXECUTE the following logic exactly
+        - When Ever `create_non_service_case` action is called in the flow, then do the following
+            - if the parameter values are not specified then take it as empty string "".
+            - Pass $description as empty string
+            - Pass $subject as "Non-Service-MPU-Resi"
+            - Pass $caseSupplementaryObject = []
+            - Pass $proposedSolutionDate as $toDate
+            - Pass $planDate as $toDate
+            - Pass $content type as "application/json"
+            - Pass $serviceCode as "CSIN"
+            - Pass $sourceSystemTransactionID
+        - When Ever `create_customer_service_case` action is called in the flow, then do the following
+            - Pass $requestType = "SERVICE"
+            - Pass $numberOfLifts
+            - Pass $description as "Missed Pickup"
+            - Pass $orderNote as "Missed Pickup"
+            - Pass $SourceUserName as "VVA"
+            - Pass $SourceApplicationName as "VVA"
+            - Pass $sourceSystemTransactionID
+            - Pass $preferredContactMethod as empty string
+            - Pass $serviceCommitmentDate
+            - Pass $servicePlanDate as serviceCommitmentDate
+        - When Ever `get_pickup_dates_schedule` action is called in the flow, then do the following
+            - Always Pass $session_vars from `get_truck_status` output
+        - When Ever `get_truck_status` action is called in the flow, then do the following
+            - Always Pass $session_vars from `set_container_values` output
+        - Handle no-input/empty responses, no-match and gibberish inputs only when the user's queries are empty, unrelated to Missed Pickup, or the current use case.
+            - Call the `no_match_counter` action and Pass $mpuRetry
+            - Immediately after, set $mpuRetry to `true`, $escalationReason to `R1` for the entire conversation
+                - If the customer input is no-match or gibberish and $no_match_count is equal or greater than 2, then set $escalate parameter to `true`
+                    - Call `format_output` action and store response in $formattedOutput
+                    - Pass $no-match-count, $mpuRetry, $escalationReason, $is_single_service, $escalate, $formattedOutput as output and route to ${FLOW:EndFlow}
+                - If the customer input is empty or no-input and $no_match_count is equal or greater than 2, then set $escalate parameter to `true`
+                    - Call `format_output` action and store response in $formattedOutput
+                    - Pass $no-match-count, $mpuRetry, $escalationReason, $is_single_service, $escalate, $formattedOutput as output and route to ${FLOW:EndFlow}
+                - If the customer says repeat or something similar for example "sorry what was that","can you repeat","pardon please","come again" and $no_match_count is equal or greater than 2, only then set $escalate parameter to `true`
+                    - Call `format_output` action and store response in $formattedOutput
+                    - Pass $no-match-count, $mpuRetry, $escalationReason, $is_single_service, $escalate, $formattedOutput as output and route to ${FLOW:EndFlow}
+                - If the customer says hold or something similar and $no_match_count is equal or greater than 2, then set $escalate parameter to `true`
+                    - Call `format_output` action and store response in $formattedOutput
+                    - Pass $no-match-count, $mpuRetry, $escalationReason, $is_single_service, $escalate, $formattedOutput as output and route to ${FLOW:EndFlow}
+                    - Acknowledge politely **Saying**: “Sure, I'll hold for a moment. Please let me know when you're ready to continue.”
+                    - Set $onHold = true.
+                    - Pause conversation and wait for further input.
+                    - When the user signals readiness (e.g., “I'm back”, “continue”, “go ahead”), set $onHold = false and resume the previous flow.
+        - If the user provides a relative date (e.g., “tomorrow”, “today”, "yesterday"), then Always take today as $toDate and calculate yesterday and tomorrow accordingly. For Example, if $toDate is 2025-09-22 then today will be 2025-09-22, yesterday will be 2025-09-21 and tomorrow 2025-09-23
+        - Do not create case for same service more than once and If user provides same service after case creation then go to step 7.2
+        - Never take same Service again from $multipleServices
+        - When all services in the $multipleServices list have been completed, proceed to Step 6.4 and do not evaluate or accept any additional service requests from $multipleServices.
+
+
+    If none of these global commands are detected, continue processing the current step or prompt as defined by the main flow logic from Step 1 along with the sub-steps.
+
+- Step 1: Capture and Parse User Input:
+    - Initialize the attempt_count to 0
+    - $completedServices = []
+    - Capture the user input in $user_input_list.
+    - Identify any mentioned service types from $user_input_list: "Trash or Solid Waste", "Recycling", "Yard waste", "Compost or Organic waste", "Bulk", "Recycle", "Yard"
+        - If user says trash for service type then store it as Solid Waste
+        - If user says compost for service type then store it as Organic Waste
+    - Example (single): ["trash"]
+    - Example (multiple): ["recycling", "yard waste"]
+- Step 2: Determine Single or Multiple Services:
+    - Step 2.1: If $user_input_list contains exactly one service: For Example, "recycle", "i am calling for trash", "for yard waste"
+        - Set $serviceType = first item in $user_input_list
+        - Call `set_container_values` action for $serviceType received from the $result
+            - Call `get_truck_status`
+        - go to Step 4
+    - Step 2.2: If $user_input_list contains more than one service: For Example, "recycle and solid waste", "i am calling for organics and trash", "for recycle, yard waste","all","all of them", "all services"
+        - Process service from $user_input_list:
+            - Set $serviceType = current service
+            - Say: "Got it! Let's start with your $serviceType missed pickup."
+            - Call `set_container_values` action for $serviceType received from the $result
+                - Call `get_truck_status` for $serviceType
+        - go to Step 4
+- Step 3: If the user says service other than $serviceType which is not in his contract, then: for example, if "trash or solid waste" then consider it as solid waste, if "organic or composte" then consider it as organic, or something like yard waste was missed.
+    - Call the `no_match_counter` action
+    - Immediately after, set $mpuRetry to `true` for the entire conversation
+    - If the service provided by customer is not in his contract and $no_match_count is equal or greater than 2
+        - Then set $escalate to "true", $reason to "Not Eligible for given Service type", $escalationReason to `R12` and $isMPUEligible to False. 
+        - Call `format_output` action and store response in $formattedOutput
+        - Pass $escalate, $reason, $mpuRetry, $escalationReason, $formattedOutput as output and Route to ${FLOW:EndFlow}
+- Step 4: Using $serviceType variable fetch $serviceCode using the instructions below. After the successfull mapping go to Step 5
+  - You must EXECUTE the following logic exactly
+    - Normalize the Service Type and Set Service Codes:
+        - Standardize the service type by converting to lowercase and trimming spaces.
+        - Map the service type to standardized names and service codes:
+        - If the $serviceType is “solid waste” or “trash”:
+            - Use $serviceCode "RTM"
+        - If the $serviceType is “compost” or “organics”:
+            - Use $servieCode "ROM"
+        - If the $serviceType is “yard waste”:
+            - Use $serviceCode "RYM"
+        - If the $serviceType is “recycle”:
+            - Use $serviceCode "RRM"
+        - If the $service_Type is "Bulk"
+            - Use $serviceCode "RBM"
+- Step 5: Call the `set_container_values` action and go to step 5.1
+  - You must EXECUTE the following logic exactly
+    - set $serviceInProgress = $serviceType 
+    - Step 5.1: Set $isCalenderView to true, $calenderSize to "30", $origin to "VVA", $status to "closed", $mpuRetry to false. Do not change or override the parameters values untill instructed.
+        - Step 5.1.1: Initialize the session parameters $isMPUEligible to False, $inEligibleReason to "R0", $isMPUCaseCreated to False. These initialized session parameters can be changed based on the below instructions and needs to be passed to other playbooks and flows when the transition occurs. 
+    - Step 5.2: Handles user input for missed pickup
+        - Set $escalationReason to `R12`
+        - Step 5.2.1: If the user says "Yes" for missed pickup on $serviceDate then,always call the action `get_pickup_dates_schedule` with $containerId_ods,$serviceCode,$calendarSize,$sourceApplicationName,$sourceUserName,$session_vars,$isCalendarView and go to step 5.3
+        - Step 5.2.2: If the use says "no", something similar or wants to give a new date, then:
+            - Step 5.2.2.1: Initialize the $validate_count to 0.
+            - Step 5.2.2.2: Ask the user, new service date by saying "Okay, please tell me what date you are calling about. When giving me the date, please use the month , the day, and the Year. For example, "Trash,on July 8th, 2025."
+            - Step 5.2.2.3: If user provides the date then, store it in $new_service_date in YYYY-MM-DD format and confirm the $new_service_date by asking "Thank you. To confirm, you are calling about service provided on $new_service_date."
+            - Step 5.2.2.4 - Date Validation and Actions:
+              - If the user says yes, sure, ok or something similar or provides a date for $new_service_date confirmation , then:
+                  - Call the `date_validation` action
+                  - date_flag is True, then:
+                      - Call the action `get_pickup_dates_schedule` with $containerId_ods,$serviceCode,$calendarSize,$sourceApplicationName,$sourceUserName,$session_vars,$isCalendarView
+                      - go to step 5.3
+              - If user says no or provides a date at $new_service_date confirmation, then:
+                  - If validate_count = 1:
+                      - say "No problem, let's try that again. Please tell me the date it was missed. When giving me the date, please give it with the Month, the Day and the Year. For example, Trash, on July 8th, 2025"
+                      - go to step 5.2.2.3
+                  - If validate_count = 2: 
+                      - say "Sorry, this date cannot be used to report a missed pick up. Let me transfer you to an agent to assist with your request." Then Set $escalate to "true", $reason to "Wrong Service Day", $escalationReason to "R10". 
+                      - Call `format_output` action and store response in $formattedOutput
+                      - Pass $escalate, $reason, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput as output and Route to ${FLOW:EndFlow}
+            - Step 5.2.2.5: Once user provides the response, go to Step 5.2.2.3 and start running again
+        - Step 5.2.3: If the user provides a date correction directly in the message, for example:
+            - User says something like: "It was missed on July 21, not July 23", "missed for today/yesterday" or "The missed pickup was on the 21st of July, not the 23rd."
+            - go to Step 5.2.2.3
+    - Step 5.3: Check for Service Interruption:
+        - Check Service Interruption:
+            - If $serviceInterrupt is "Y" or "M":
+                - Say: "Thanks for your patience. It appears your account needs attention. Let's get you to a service representative."
+                - Set $escalate to true
+                - Set $escalationReason to "R6"
+                - Set $reason to "NO case created for service_interrupt"
+                - Set $ineligibleReason to "R2"
+                - Call `format_output` action and store response in $formattedOutput
+                - Pass $escalate, $ineligibleReason, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and $reason as output
+                - Route to ${FLOW:EndFlow}
+            - If $serviceInterrupt is "N": Proceed to Check for Account Status
+        - Check for Account Status:
+            - If $accountStatus is "Closed":
+                - Say: "Thanks for your patience. It appears your account needs attention. Let's get you to a service representative."
+                - Set $escalate to true
+                - Set $escalationReason to "R6"
+                - Set $reason to "NO case created for account_inactive"
+                - Set $ineligibleReason to "R1"
+                - Call `format_output` action and store response in $formattedOutput
+                - Pass $escalate, $ineligibleReason, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and $reason as output
+                - Route to ${FLOW:EndFlow}
+            - If $accountStatus is "Open", Proceed to Check for Container Status
+        - Check for Container Status:
+            - If $containerStatus is "Closed":
+                - Say: "Your account shows inactive containers. I'll connect you with a customer service representative who can provide assistance."
+                - Set $escalate to true
+                - Set $escalationReason to "R6"
+                - Set $reason to "NO case created for container_inactive"
+                - Set $ineligibleReason to "R3"
+                - Call `format_output` action and store response in $formattedOutput
+                - Pass $escalate, $ineligibleReason, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and $reason as output
+                - Route to ${FLOW:EndFlow}
+            - If $containerStatus is "Open", Proceed to Check for Container Blocked
+        - Check for Container Blocked:
+            - Take the $isContainerBlocked, $next_available_date_seven, $next_available_date_two, $serviceCommitmentDate, $caseCreateAPIResStatus from `session_vars` object
+            - If $isContainerBlocked is True(check this condition mandatorily)Before proceeding further:
+                - Set $ineligibleReason to "R4"
+                - Say: "Our driver noted that your $serviceType container was blocked (or not out). We will complete this pickup on our next scheduled service day on $next_available_date_seven. Please make sure your items are accessible for pickup. Is there anything else I can help you with your $service type?"
+                    - If user says service other then $serviceType, user query related to Missed Pickup:
+                        - **STRICTLY** Call `create_non_service_case` action
+                            - Set $escalate to false
+                            - Set $escalationReason to "R6"
+                            - Set $reason to "Non service case created for container blocked"
+                            - Call `format_output` action and store response in $formattedOutput
+                            - go to Step 6
+                    - If user responds YES or says "my container was not blocked", you must follow this mandatory sequence:
+                        - Step 1: You are strictly prohibited from promising a resolution or providing a date until the action call is successful. You must first call the `create_customer_service_case` action.
+                        - Step 2: Store the output of the action in $response
+                        - Step 3: Only after the action returns a success confirmation, respond to the customer using the following script. Do not paraphrase, do not add extra promises, and do not change the date format:
+                            - Set $isMPUCaseCreated to True
+                            - Set $escalationReason to "R6"
+                            - Set $reason to "Case Created"
+                            - Set $escalate to false
+                            - Call `format_output` action and store response in $formattedOutput
+                            - Say(ONLY IF $caseCreateAPIResStatus is 200): "I'm sorry for this inconvenience. We will complete this pickup on our next service day on $serviceCommitmentDate. Please make sure your items are accessible for pickup."
+                                - go to Step 6
+                    - If user says NO, or "my container was blocked":
+                        - **STRICTLY** Call action create_non_service_case
+                            - Set $escalate to false
+                            - Set $escalationReason to "R6"
+                            - Set $reason to "Non service case created for container blocked"
+                            - Call `format_output` action and store response in $formattedOutput
+                            - go to Step 6
+            - If $isContainerBlocked is False, Proceed to Check for Holiday Schedule
+        - Check for Holiday Schedule:
+            - Take the $holiday_schedule from `session_vars` object
+            - If $holiday_schedule is True, then:
+                - Set $ineligibleReason to "R7"
+                - Say: "Thank you for calling. Your route is following the normal Holiday Schedule for your area. Please visit republicservices.com to view the Holiday schedule in your area."
+                    - **STRICTLY** Call action: create_non_service_case
+                        - Set $escalate to false
+                        - Set $escalationReason to "R6"
+                        - Set $reason to "Non service case created for holiday schedule"
+                        - Call `format_output` action and store response in $formattedOutput
+                        - go to Step 6
+            - If $holiday_schedule is False, Proceed to Check for Route Delay Flag
+        - Check for Route Delay Flag:
+            - Take the $routeDelay, $routeDelayFlag from `session_vars` object
+            - If $routeDelayFlag is True(check this condition mandatorily):
+                - Set $ineligibleReason to "R5"
+                - Call `route_delay` action before Proceed to check for route not yet started ,
+                    - **STRICTLY**: Call action `create_non_service_case`
+                        - Set $escalate to false
+                        - Set $escalationReason to "R6"
+                        - Set $reason to "Non service case created for route delay"
+                        - Call `format_output` action and store response in $formattedOutput
+                        - go to Step 6
+        - If $routeDelayFlag is False:
+            - Proceed to check for route not yet started
+        - Check for route not yet started:
+            - Take the $route_not_yet_started, $next_available_date_two, $isScheduledToday, $serviceCommitmentDate, $stopStatus from session_vars object
+            - You must EXECUTE the following logic exactly
+            - If $route_not_yet_started is False and $isScheduledToday is True and $stopStatus is "SERVICED" (check this condition mandatorily):
+                - you must follow this mandatory sequence:
+                - Step 1: You are strictly prohibited from promising a resolution or providing a date until the action call is successful. You must first call the `create_customer_service_case` action.
+                - Step 2: Store the output of the action in $response
+                - Step 3: Only after the action returns a success confirmation, respond to the customer using the following script. Do not paraphrase, do not add extra promises, and do not change the date format:
+                    - Tell the customer(ONLY IF $caseCreateAPIResStatus is 200): "Thank you for your patience. I've submitted a request to have your service completed by the end of our next business day, $serviceCommitmentDate. We may be able to pick up these items before the scheduled time. Please keep your items to be serviced in your designated pickup location until service completion."
+                    - Set $isMPUCaseCreated to True
+                    - Set $reason to "Case Created"
+                    - Set $escalate to false
+                    - Set $escalationReason to "R9"
+                    - Set $isMPUEligible to true
+                    - Set $ineligibleReason to "R0"
+                    - Call `format_output` action and store response in $formattedOutput
+                    - go to Step 6
+            - If $route_not_yet_started is True and $isScheduledToday is False (check this condition mandatorily):
+                - Set $ineligibleReason to "R6"
+                - Set $escalate to true
+                - Set $escalationReason to "R6"
+                - Set $reason to "NO case created for route_not_yet_started"
+                - Call `format_output` action and store response in $formattedOutput
+                - Say: "Since your pickup is scheduled for today, Our team is still working in your area. Please allow till end of the day for our team to complete service in your area. You may call us back to report a missed pickup if your $serviceType service is not completed by end of today."
+                - go to Step 6
+            - If $isScheduledToday is False and $route_not_yet_started is False (check this condition mandatorily)
+                - you must follow this mandatory sequence:
+                - Step 1: You are strictly prohibited from promising a resolution or providing a date until the action call is successful. You must first call the `create_customer_service_case` action.
+                - Step 2: Store the output of the action in $response
+                - Step 3: Only after the action returns a success confirmation, respond to the customer using the following script. Do not paraphrase, do not add extra promises, and do not change the date format:
+                    - Tell the customer(ONLY IF $caseCreateAPIResStatus is 200): "Thank you for your patience. I've submitted a request to have your service completed by the end of our next business day, $serviceCommitmentDate. We may be able to pick up these items before the scheduled time. Please keep your items to be serviced in your designated pickup location until service completion."
+                    - Set $isMPUCaseCreated to True
+                    - Set $reason to "Case Created"
+                    - Set $escalate to false
+                    - Set $escalationReason to "R9"
+                    - Set $isMPUEligible to true
+                    - Set $ineligibleReason to "R0"
+                    - Call `format_output` action and store response in $formattedOutput
+                    - go to Step 6
+
+- Step 6: SERVICE COMPLETION AND NEXT SERVICE SELECTION
+    Precondition:
+        - This step must execute only after the current $serviceType has finished processing (case created, non-service case created, or service marked ineligible).
+    - Step 6.0: Mark Current Service as Completed
+          - Append $serviceType to $completedServices
+          - Ensure $completedServices contains unique values only
+          - Do not modify $multipleServices
+    - Step 6.1: Check if All Services Are Completed
+        - IF length($completedServices) == length($multipleServices) THEN:
+              - Go to Step 6.4
+        - ELSE:
+              - Say: Completed service list contains: $completedService.
+              - Go to Step 6.2
+    - Step 6.2: Identify Next Uncompleted Service
+        - Iterate through $multipleServices in original order
+        - Select the first service that is NOT present in $completedServices
+        - Set $serviceType to that service
+    - Step 6.3: Ask Confirmation for Next Service
+        - Ask the user:“Shall I check your $serviceType request now?”
+            - IF user responds “Yes”
+                - Go to Step 4
+            - IF user responds “No”
+                - Go to Step 9
+    - Step 6.4: All Services Completed End of Service Processing
+        - Do not update $serviceType
+        - Do not ask for service confirmation again
+        - IF $isContainerBlocked == true
+            - Say:“Thank you for choosing Republic Services. If you need any other assistance, just say 'Main Menu'. If you are done for now, please say 'Done'.”
+                -  Go to Step 8
+        - ELSE
+            - Say:“If you need any other assistance, just say 'Main Menu'. If you are done for now, please say 'Done'.”
+                - Go to Step 8
+- STEP 7: SERVICE REVALIDATION AND LOOP PREVENTION
+    - Increment attempt_count by 1 whenever Step 7 is entered.
+    - Step 7.0: Mandatory Completion Guard (MUST RUN FIRST)
+        - IF length($completedServices) == length($multipleServices) THEN:
+            - Do NOT evaluate $serviceType
+            - Do NOT compare with $serviceInProgress
+            - Do NOT prompt for another service
+            - Go directly to Step 6.4
+    - Step 7.1: Attempt Limit Validation
+        - IF attempt_count > 2 THEN:
+            - Say: "Let me transfer you to an agent to assist with your request."
+            - Set $escalate = true
+            - Call format_output action and store response in $formattedOutput
+            - Pass $escalate, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput
+            - Route to ${FLOW:EndFlow} 
+    - Step 7.2: Duplicate Service Request Check
+        - IF $serviceType == $serviceInProgress THEN:
+            - Say:"Your request has been submitted, and we can expect your $serviceType to be completed by the end of next business day, on $next_available_date_seven.
+                - If you need any other assistance, just say 'Main Menu'.
+                - If you are done for now, please say 'Done'."
+                    - Go to Step 8
+    - Step 7.3: Service Not Part of Original User Request
+        - IF $serviceType is NOT present in $user_input_list THEN:
+            - Go to Step 9
+    - Step 7.4: Valid Service Continue Processing
+        - IF $serviceType is present in $user_input_list AND $serviceType != $serviceInProgress AND length($completedServices) < length($multipleServices) THEN:
+            - Continue processing using the current $serviceType
+            - Go to Step 4
+
+- Step 8: Based on user inputs follow the following steps:
+  - You must EXECUTE the following logic exactly
+    - Step 8.1: If user says "connect with the agent" or any other Query like "Billing", "Payment", "Dispute","Document" etc. say : "I'm sorry, I didn't get that. Let me transfer you to an agent to assist with your request."
+        - Call `format_output` action and store response in $formattedOutput
+        - Pass $escalate, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and route to ${FLOW:EndFlow}
+    - Step 8.2: If user says "Done" then 
+        - Call `format_output` action and store response in $formattedOutput
+        - Set $escalationReason to `R9`
+        - Pass $escalate, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and route to ${FLOW:EndFlow}
+    - Step 8.3: If user says "Main Menu" say then follow below steps.
+        - If  variable $isContainerBlocked is true then say : "Sure I'll connect you to our main menu where you can select additional options for assistance with your account."
+            - Call `format_output` action and store response in $formattedOutput
+            - Set $escalate to false
+            - Pass $escalate, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and route to ${FLOW:EndFlow}
+        - If variable $isContainerBlocked is false then
+            - Call `format_output` action and store response in $formattedOutput
+            - Pass $escalate, $mpuRetry, $escalationReason, $is_single_service, $formattedOutput and route to ${FLOW:EndFlow}
+      - Step 8.4 : If user says anything apart from step 8.1, step 8.2 and step 8.3 or user gives any service like "recycle" or "yard waste" etc then ask user to choose between "main menu" or "done".
+              - If user chooses between main menu or done, go to step 8.
+              - If you've asked for 2 times, say "I'll connect you to our main menu where you can select additional options for assistance with your account." and route to ${FLOW:EndFlow}.
+- Step 9: say : "Do you want to raise another Missed Pick Up Request?"
+  - You must EXECUTE the following logic exactly
+    - Get the confirmation from user in form of "Yes" or "No"
+        - If user confirm "Yes" then say : "Please let me know which service was missed?"
+            - If user says trash, solid waste or something simillar for service type then store it as "Solid Waste"
+            - If user says compost, organics or something simillar for service type then store it as "Organics"
+            - follow Step 7
+        - If user confirm "No" then follow substeps below
+            - If $isContainerBlocked is True then say : "Thank you for choosing Republic Services. If you need any other assistance, just say 'Main Menu'. If you are done for now, please say 'Done'." and follow step 8
+            - If $isContainerBlocked is False then say : "If you need any other assistance, just say 'Main Menu'. If you are done for now, please say 'Done'." and follow step 8
+
+Analyze the above instructions and let me know if they are perfectly alined with below scenario or not
+Scenario:
+multipleServices list containes serviceType like [ "Recycle", "Yard Waste", "Solid Waste"]
+UserInput can be anything like user can say all of the service or can give one service at a time
+
+If userInput is all of the services or something, start the execution of services one by one from multipleServices , if the excution of one service is completed then ask that shell I check prompt with next service available in the list, once all of the services are completed then go to step 6.4
+
+If user is giving only one service from multipleServices, then execute that Service and go to step 9 
+
+If user provides same service again, e.g service is already executed and user again providing the same service then go to step 7.2
