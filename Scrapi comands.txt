@@ -1,0 +1,21 @@
+CX AS SCRAPI -
+ 
+1. python --version				// TO CHECK VERSION
+2. python -m venv .venv         // Create a virtual environment called ".venv"
+3. source .venv/bin/activate    // Activate it
+4. uv pip install cxas-scrapi   //That's it. uv will download and install cxas-scrapi and all of its dependencies automatically.
+5. gemini 						//cmd line interface activate
+5. ask for skill in gemini cli  // cxas-agent-foundry
+6. activate cxas-agent-foundry and pull the app 'e772eab5-812e-4f58-b88b-c91266301f81' from 'de-cx-agents-usc1-ri'    //this is for activating skill and pull the existing agent from project
+ 
+ 
+----------------------------------
+Next Day -
+ 
+1. gemini 
+2. /resume   //continue
+-------------------------------------------------------------------------------------------------------------------------------------------
+5. gcloud init					//Connects your machine to Google Cloud (CHOOSE 1)
+6. gcloud auth login			//Logs you into Google account
+7. gcloud auth application-default login     //Creates Application Default Credentials (ADC)
+8. cxas init                   // choose s
